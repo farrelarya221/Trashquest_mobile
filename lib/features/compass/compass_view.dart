@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:url_launcher/url_launcher.dart';
 import '../../data/models/waste_bank.dart';
@@ -21,6 +22,9 @@ class _CompassViewState extends State<CompassView> {
   double _deviceHeading = 0.0;
   double _unwrappedHeading = 0.0;
   double _lastRawHeading = 0.0;
+  bool _hasInitialHeading = false;
+  int _lastHapticCardinal = -1;
+  int _lastTargetHaptic = -1;
 
   double _targetBearing = 0.0;
   double _distanceKm = 0.0;
@@ -43,20 +47,61 @@ class _CompassViewState extends State<CompassView> {
       onUpdate: (heading) {
         if (!mounted) return;
         setState(() {
-          // Continuous unwrap to guarantee butter-smooth rotation without 360-to-0 jumping
-          double diff = heading - _lastRawHeading;
-          if (diff > 180) diff -= 360;
-          if (diff < -180) diff += 360;
+          if (!_hasInitialHeading) {
+            _unwrappedHeading = heading;
+            _lastRawHeading = heading;
+            _deviceHeading = heading;
+            _hasInitialHeading = true;
+          } else {
+            // Continuous unwrap to guarantee butter-smooth rotation without 360-to-0 jumping
+            double diff = heading - _lastRawHeading;
+            if (diff > 180) diff -= 360;
+            if (diff < -180) diff += 360;
 
-          _unwrappedHeading += diff;
-          _lastRawHeading = heading;
-          _deviceHeading = heading;
+            // Deadband filter: ignore sub-0.15° micro-noise
+            if (diff.abs() > 0.15 || _unwrappedHeading.isNaN) {
+              _unwrappedHeading += diff;
+              _lastRawHeading = heading;
+              _deviceHeading = heading;
+            }
+          }
         });
+
+        _checkHapticFeedback(heading);
       },
     );
 
     if (mounted) {
       setState(() => _isLoading = false);
+    }
+  }
+
+  void _checkHapticFeedback(double heading) {
+    // 1. Cardinal Snap Haptic (North = 0°, East = 90°, South = 180°, West = 270°)
+    final nearestCardinalIndex = ((heading + 2.0) % 360 ~/ 90);
+    final cardinalAngle = nearestCardinalIndex * 90.0;
+    double cardDiff = (heading - cardinalAngle).abs();
+    if (cardDiff > 180) cardDiff = 360 - cardDiff;
+
+    if (cardDiff <= 2.0) {
+      if (_lastHapticCardinal != nearestCardinalIndex) {
+        _lastHapticCardinal = nearestCardinalIndex;
+        HapticFeedback.selectionClick();
+      }
+    } else {
+      _lastHapticCardinal = -1;
+    }
+
+    // 2. Target Destination Alignment Haptic (when facing within ±2.5° of Bank Sampah)
+    double targetDiff = (heading - _targetBearing).abs();
+    if (targetDiff > 180) targetDiff = 360 - targetDiff;
+    if (targetDiff <= 2.5) {
+      if (_lastTargetHaptic != 1) {
+        _lastTargetHaptic = 1;
+        HapticFeedback.mediumImpact();
+      }
+    } else {
+      _lastTargetHaptic = 0;
     }
   }
 
@@ -165,181 +210,265 @@ class _CompassViewState extends State<CompassView> {
             ? const Center(
                 child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF22C55E)),
               )
-            : Column(
-                children: [
-                  const SizedBox(height: 16),
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  // Dynamically scale compass dial so it comfortably fits any screen height
+                  final availableHeight = constraints.maxHeight;
+                  final dialSize = math.min(320.0, math.max(220.0, availableHeight - 370.0));
 
-                  // 1. Heading Degree & Cardinal Text (Pixel-perfect typography)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${_deviceHeading.round()}°',
-                        style: const TextStyle(
-                          fontSize: 64,
-                          fontWeight: FontWeight.w300,
-                          color: Colors.white,
-                          letterSpacing: -2,
-                          height: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 6,
-                            height: 6,
-                            decoration: BoxDecoration(
-                              color: _compassService.hasGyroscope
-                                  ? const Color(0xFF22C55E)
-                                  : const Color(0xFFEAB308),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            _getCardinalDirection(_deviceHeading).toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-
-                  const Spacer(),
-
-                  // 2. Ultra-Smooth Vector Compass Dial
-                  Center(
-                    child: SizedBox(
-                      width: 320,
-                      height: 320,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // Rotating Vector Dial (Smooth 60/120fps GPU transform)
-                          TweenAnimationBuilder<double>(
-                            tween: Tween<double>(begin: unwrappedDialTurns, end: unwrappedDialTurns),
-                            duration: const Duration(milliseconds: 60),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, turns, child) {
-                              return Transform.rotate(
-                                angle: turns * 2 * math.pi,
-                                child: child,
-                              );
-                            },
-                            child: Container(
-                              width: 320,
-                              height: 320,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black,
-                              ),
-                              child: CustomPaint(
-                                size: const Size(320, 320),
-                                painter: _SmoothCompassDialPainter(),
-                              ),
-                            ),
-                          ),
-
-                          // Vector Center Crosshair & Gimbal Circle
-                          IgnorePointer(
-                            child: CustomPaint(
-                              size: const Size(140, 140),
-                              painter: _CenterCrosshairPainter(),
-                            ),
-                          ),
-
-                          // Rotating Target Pointer Arrow (Smooth Vector Render)
-                          TweenAnimationBuilder<double>(
-                            tween: Tween<double>(begin: unwrappedArrowTurns, end: unwrappedArrowTurns),
-                            duration: const Duration(milliseconds: 60),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, turns, child) {
-                              return Transform.rotate(
-                                angle: turns * 2 * math.pi,
-                                child: child,
-                              );
-                            },
-                            child: SizedBox(
-                              width: 320,
-                              height: 320,
-                              child: CustomPaint(
-                                size: const Size(320, 320),
-                                painter: _TargetArrowPainter(),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const Spacer(),
-
-                  // 3. Target Destination Details & Google Maps Quick Route Card
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2C2C2E), // Apple Card Dark Tone
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.1),
-                        width: 1.0,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.35),
-                          blurRadius: 18,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
+                  return SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: availableHeight),
+                      child: IntrinsicHeight(
+                        child: Column(
                           children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF16A34A),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.location_on_rounded,
-                                color: Colors.white,
-                                size: 22,
+                            const SizedBox(height: 12),
+
+                            // 1. Heading Degree & Cardinal Text (Pixel-perfect typography)
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '${_deviceHeading.round()}°',
+                                  style: const TextStyle(
+                                    fontSize: 58,
+                                    fontWeight: FontWeight.w300,
+                                    color: Colors.white,
+                                    letterSpacing: -2,
+                                    height: 1.1,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        color: _compassService.hasGyroscope
+                                            ? const Color(0xFF22C55E)
+                                            : const Color(0xFFEAB308),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      _getCardinalDirection(_deviceHeading).toUpperCase(),
+                                      style: const TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _compassService.hasGyroscope
+                                      ? 'Sensor Fusion 3D (Gyro + Kompas)'
+                                      : 'Kompas 3D Tilt-Compensated',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.white.withValues(alpha: 0.45),
+                                    letterSpacing: 0.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const Spacer(),
+
+                            // 2. Responsive Vector Compass Dial (Auto-scaled with zero pixel overflow)
+                            Center(
+                              child: SizedBox(
+                                width: dialSize,
+                                height: dialSize,
+                                child: FittedBox(
+                                  fit: BoxFit.contain,
+                                  child: SizedBox(
+                                    width: 320,
+                                    height: 320,
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        // Rotating Vector Dial (Smooth 60/120fps GPU transform)
+                                        TweenAnimationBuilder<double>(
+                                          tween: Tween<double>(end: unwrappedDialTurns),
+                                          duration: const Duration(milliseconds: 90),
+                                          curve: Curves.easeOutCubic,
+                                          builder: (context, turns, child) {
+                                            return Transform.rotate(
+                                              angle: turns * 2 * math.pi,
+                                              child: child,
+                                            );
+                                          },
+                                          child: RepaintBoundary(
+                                            child: Container(
+                                              width: 320,
+                                              height: 320,
+                                              decoration: const BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: Colors.black,
+                                              ),
+                                              child: CustomPaint(
+                                                size: const Size(320, 320),
+                                                painter: _SmoothCompassDialPainter(),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+
+                                        // Vector Center Crosshair & Gimbal Circle (Interactive 3D Level)
+                                        IgnorePointer(
+                                          child: CustomPaint(
+                                            size: const Size(140, 140),
+                                            painter: _CenterCrosshairPainter(
+                                              pitch: _compassService.currentPitch,
+                                              roll: _compassService.currentRoll,
+                                            ),
+                                          ),
+                                        ),
+
+                                        // Rotating Target Pointer Arrow (Smooth Vector Render)
+                                        TweenAnimationBuilder<double>(
+                                          tween: Tween<double>(end: unwrappedArrowTurns),
+                                          duration: const Duration(milliseconds: 90),
+                                          curve: Curves.easeOutCubic,
+                                          builder: (context, turns, child) {
+                                            return Transform.rotate(
+                                              angle: turns * 2 * math.pi,
+                                              child: child,
+                                            );
+                                          },
+                                          child: RepaintBoundary(
+                                            child: SizedBox(
+                                              width: 320,
+                                              height: 320,
+                                              child: CustomPaint(
+                                                size: const Size(320, 320),
+                                                painter: _TargetArrowPainter(),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    widget.targetBank.name,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+
+                            const Spacer(),
+
+                            // 3. Target Destination Details & Google Maps Quick Route Card
+                            Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2C2C2E), // Apple Card Dark Tone
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.1),
+                                  width: 1.0,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.35),
+                                    blurRadius: 18,
+                                    offset: const Offset(0, 6),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Jarak: ${_formatDistance(_distanceKm)} • Arah: ${_targetBearing.round()}° (Relatif ${relativeAngle.round()}°)',
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.75),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
+                                ],
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF16A34A),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.location_on_rounded,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              widget.targetBank.name,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              'Jarak: ${_formatDistance(_distanceKm)} • Arah: ${_targetBearing.round()}° (Relatif ${relativeAngle.round()}°)',
+                                              style: TextStyle(
+                                                color: Colors.white.withValues(alpha: 0.75),
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      widget.targetBank.address,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.45),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+
+                                  // Turn-by-Turn Google Maps Navigation Action
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed: _openGoogleMapsRoute,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF16A34A),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                        elevation: 0,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(14),
+                                        ),
+                                      ),
+                                      icon: const Icon(Icons.near_me_rounded, size: 18),
+                                      label: const Text(
+                                        'Buka Rute Google Maps',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.2,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -347,50 +476,10 @@ class _CompassViewState extends State<CompassView> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            widget.targetBank.address,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.45),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-
-                        // Turn-by-Turn Google Maps Navigation Action
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _openGoogleMapsRoute,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF16A34A),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                            icon: const Icon(Icons.near_me_rounded, size: 18),
-                            label: const Text(
-                              'Buka Rute Google Maps',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 0.2,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  );
+                },
               ),
       ),
     );
@@ -512,13 +601,19 @@ class _SmoothCompassDialPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-/// Vector Painter for Center Gimbal Crosshairs
+/// Vector Painter for Center Gimbal Crosshairs with Interactive 3D Level
 class _CenterCrosshairPainter extends CustomPainter {
+  final double pitch;
+  final double roll;
+
+  _CenterCrosshairPainter({this.pitch = 0.0, this.roll = 0.0});
+
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
 
+    // Fixed Outer Gimbal Ring
     final circlePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.14)
       ..style = PaintingStyle.stroke
@@ -527,27 +622,39 @@ class _CenterCrosshairPainter extends CustomPainter {
 
     canvas.drawCircle(center, radius, circlePaint);
 
+    // Dynamic Level Crosshair Offset (Simulating Apple Compass Level)
+    const maxOffset = 22.0;
+    final offsetX = (roll / 30.0 * maxOffset).clamp(-maxOffset, maxOffset);
+    final offsetY = (pitch / 30.0 * maxOffset).clamp(-maxOffset, maxOffset);
+    final levelCenter = Offset(center.dx + offsetX, center.dy + offsetY);
+
+    final isLevel = (offsetX.abs() < 2.0 && offsetY.abs() < 2.0);
+
+    // Center Level Dot
     final dotPaint = Paint()
-      ..color = Colors.white
+      ..color = isLevel ? const Color(0xFF22C55E) : Colors.white
       ..style = PaintingStyle.fill
       ..isAntiAlias = true;
 
-    canvas.drawCircle(center, 5.0, dotPaint);
+    canvas.drawCircle(levelCenter, 4.5, dotPaint);
 
-    // Subtle crosshair cross markers
+    // Crosshair lines that turn Emerald Green when level
     final crossPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.3)
-      ..strokeWidth = 1.0
+      ..color = isLevel
+          ? const Color(0xFF22C55E).withValues(alpha: 0.85)
+          : Colors.white.withValues(alpha: 0.35)
+      ..strokeWidth = 1.2
       ..isAntiAlias = true;
 
-    canvas.drawLine(Offset(center.dx - 12, center.dy), Offset(center.dx - 6, center.dy), crossPaint);
-    canvas.drawLine(Offset(center.dx + 6, center.dy), Offset(center.dx + 12, center.dy), crossPaint);
-    canvas.drawLine(Offset(center.dx, center.dy - 12), Offset(center.dx, center.dy - 6), crossPaint);
-    canvas.drawLine(Offset(center.dx, center.dy + 6), Offset(center.dx, center.dy + 12), crossPaint);
+    canvas.drawLine(Offset(levelCenter.dx - 11, levelCenter.dy), Offset(levelCenter.dx - 5, levelCenter.dy), crossPaint);
+    canvas.drawLine(Offset(levelCenter.dx + 5, levelCenter.dy), Offset(levelCenter.dx + 11, levelCenter.dy), crossPaint);
+    canvas.drawLine(Offset(levelCenter.dx, levelCenter.dy - 11), Offset(levelCenter.dx, levelCenter.dy - 5), crossPaint);
+    canvas.drawLine(Offset(levelCenter.dx, levelCenter.dy + 5), Offset(levelCenter.dx, levelCenter.dy + 11), crossPaint);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _CenterCrosshairPainter oldDelegate) =>
+      oldDelegate.pitch != pitch || oldDelegate.roll != roll;
 }
 
 /// Vector Painter for Glowing Target Pointer Needle (Points towards Bank Sampah)

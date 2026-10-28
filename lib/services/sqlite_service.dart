@@ -70,18 +70,27 @@ class SqliteService {
             PRIMARY KEY (user_id, quest_id)
           )
         ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS user_achievements (
+            user_id TEXT NOT NULL,
+            code TEXT NOT NULL,
+            is_unlocked INTEGER DEFAULT 0,
+            unlocked_at TEXT,
+            verification_hash TEXT,
+            PRIMARY KEY (user_id, code)
+          )
+        ''');
         try {
           await db.execute('ALTER TABLE offline_quests ADD COLUMN is_claimed INTEGER DEFAULT 0');
         } catch (_) {}
-        // Clean Slate Reset (Semua user belum pernah terbitkan piagam & misi terisolasi per user)
+        // Clean Slate Reset V10 (Semua user belum pernah terbitkan piagam & misi terisolasi per user)
         try {
-          final prefs = await db.query('app_preferences', where: 'pref_key = ?', whereArgs: ['clean_slate_reset_v6']);
+          final prefs = await db.query('app_preferences', where: 'pref_key = ?', whereArgs: ['clean_slate_reset_v10']);
           if (prefs.isEmpty) {
             await db.update('offline_achievements', {'is_unlocked': 0, 'verification_hash': null, 'unlocked_at': null});
-            await db.update('offline_quests', {'progress': 0, 'is_completed': 0, 'is_claimed': 0});
-            await db.delete('user_quests');
-            await db.insert('app_preferences', {'pref_key': 'clean_slate_reset_v6', 'pref_value': 'done'});
-            debugPrint('🧹 [CLEAN SLATE] Semua piagam telah di-reset ke belum terbit & misi bersih per user!');
+            await db.delete('user_achievements');
+            await db.insert('app_preferences', {'pref_key': 'clean_slate_reset_v10', 'pref_value': 'done'}, conflictAlgorithm: ConflictAlgorithm.replace);
+            debugPrint('🧹 [CLEAN SLATE V10] Semua piagam di-reset ke BELUM PERNAH TERBIT untuk SEMUA user!');
           }
         } catch (_) {}
       },
@@ -528,49 +537,112 @@ class SqliteService {
     }
   }
 
-  // --- Achievements ---
-  Future<List<Achievement>> getAchievements() async {
+  // --- Achievements (Khusus Per-User) ---
+  Future<void> _ensureUserAchievementsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS user_achievements (
+        user_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        is_unlocked INTEGER DEFAULT 0,
+        unlocked_at TEXT,
+        verification_hash TEXT,
+        PRIMARY KEY (user_id, code)
+      )
+    ''');
+  }
+
+  Future<List<Achievement>> getAchievements({String? targetUserId}) async {
     try {
       final db = await database;
-      // Pastikan piagam default yang sebelumnya otomatis terbuka di-reset agar harus dicapai via quest
-      await db.update(
-        'offline_achievements',
-        {'is_unlocked': 0, 'verification_hash': null},
-        where: "verification_hash = '0x94192cc6c956e0c654ade78c3eea395cd7986efec571947b8099915d70d2b8bf' OR verification_hash = '0x354b6135f3fdfeae638767bf5470232b228d6b012255f994ba358ba81707c630' OR verification_hash = '0x5788d7e49e76d1ff1b9789a9545ecbfa9e0e961d002fb60433c3a9466b41f262' OR verification_hash LIKE '%dummy%' OR verification_hash LIKE '%mock%' OR verification_hash = '0x82592d322e0a703a47c92ae3ce03d94af440458024e756bf42e14231d58bb6de' OR verification_hash = '0x18585dbb0b06114708b551a3dac01ffef189ed9112ed650e35f456622d73478f'",
+      await _ensureUserAchievementsTable(db);
+
+      final uid = (targetUserId != null && targetUserId.isNotEmpty)
+          ? targetUserId
+          : SupabaseService.instance.currentUser.id.isNotEmpty
+              ? SupabaseService.instance.currentUser.id
+              : 'guest';
+
+      final userRows = await db.query(
+        'user_achievements',
+        where: 'user_id = ?',
+        whereArgs: [uid],
       );
-      // Sinkronisasi required_xp dan deskripsi quest
+
+      final Map<String, Map<String, dynamic>> userAchMap = {
+        for (var row in userRows) row['code'] as String: row,
+      };
+
+      final List<Achievement> result = [];
       for (final def in _defaultAchievements) {
-        await db.update(
-          'offline_achievements',
-          {
-            'required_xp': def.requiredXp,
-            'description': def.description,
-            'name': def.name,
-          },
-          where: 'code = ?',
-          whereArgs: [def.code],
-        );
+        final row = userAchMap[def.code];
+        final hash = row?['verification_hash'] as String?;
+        final isUnlocked = row != null &&
+            (row['is_unlocked'] == 1 || row['is_unlocked'] == true) &&
+            hash != null &&
+            hash.trim().isNotEmpty;
+
+        if (isUnlocked) {
+          final unlockedAtStr = row['unlocked_at'] as String?;
+          DateTime? unlockedAtDate;
+          if (unlockedAtStr != null) {
+            unlockedAtDate = DateTime.tryParse(unlockedAtStr);
+          }
+          result.add(def.copyWith(
+            isUnlocked: true,
+            verificationHash: hash,
+            unlockedAt: unlockedAtDate,
+          ));
+        } else {
+          // Default awal: SEMUA USER BELUM PERNAH TERBITKAN PIAGAM
+          result.add(def.copyWith(
+            isUnlocked: false,
+            verificationHash: null,
+            unlockedAt: null,
+          ));
+        }
       }
-      final maps = await db.query('offline_achievements', orderBy: 'required_xp ASC');
-      return maps.map((m) => Achievement.fromMap(m)).toList();
+      return result;
     } catch (e) {
+      debugPrint('Error getting per-user achievements: $e');
       return _defaultAchievements;
     }
   }
 
-  Future<void> unlockAchievement(String code, String hash, {bool syncToCloud = true}) async {
+  Future<void> unlockAchievement(String code, String hash, {String? targetUserId, bool syncToCloud = true}) async {
     try {
       final db = await database;
+      await _ensureUserAchievementsTable(db);
+
+      final uid = (targetUserId != null && targetUserId.isNotEmpty)
+          ? targetUserId
+          : SupabaseService.instance.currentUser.id.isNotEmpty
+              ? SupabaseService.instance.currentUser.id
+              : 'guest';
+
+      final now = DateTime.now().toIso8601String();
+      await db.insert(
+        'user_achievements',
+        {
+          'user_id': uid,
+          'code': code,
+          'is_unlocked': 1,
+          'unlocked_at': now,
+          'verification_hash': hash,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
       await db.update(
         'offline_achievements',
         {
           'is_unlocked': 1,
-          'unlocked_at': DateTime.now().toIso8601String(),
+          'unlocked_at': now,
           'verification_hash': hash,
         },
         where: 'code = ?',
         whereArgs: [code],
       );
+
       if (syncToCloud) {
         SupabaseService.instance.syncAchievementToCloud(code, hash);
       }
@@ -579,27 +651,49 @@ class SqliteService {
     }
   }
 
-  Future<void> restoreAchievementFromCloud(String code, String hash, {String? unlockedAt}) async {
+  Future<void> restoreAchievementFromCloud(String code, String hash, {String? targetUserId, String? unlockedAt}) async {
     try {
       final db = await database;
-      await db.update(
-        'offline_achievements',
+      await _ensureUserAchievementsTable(db);
+
+      final uid = (targetUserId != null && targetUserId.isNotEmpty)
+          ? targetUserId
+          : SupabaseService.instance.currentUser.id.isNotEmpty
+              ? SupabaseService.instance.currentUser.id
+              : 'guest';
+
+      await db.insert(
+        'user_achievements',
         {
+          'user_id': uid,
+          'code': code,
           'is_unlocked': 1,
           'unlocked_at': unlockedAt ?? DateTime.now().toIso8601String(),
           'verification_hash': hash,
         },
-        where: 'code = ?',
-        whereArgs: [code],
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
     } catch (e) {
       debugPrint('Error restoring achievement from cloud: $e');
     }
   }
 
-  Future<void> resetLocalAchievementsForNewUser() async {
+  Future<void> resetLocalAchievementsForNewUser({String? targetUserId}) async {
     try {
       final db = await database;
+      await _ensureUserAchievementsTable(db);
+
+      final uid = (targetUserId != null && targetUserId.isNotEmpty)
+          ? targetUserId
+          : SupabaseService.instance.currentUser.id.isNotEmpty
+              ? SupabaseService.instance.currentUser.id
+              : 'guest';
+
+      await db.delete(
+        'user_achievements',
+        where: 'user_id = ?',
+        whereArgs: [uid],
+      );
       await db.update(
         'offline_achievements',
         {'is_unlocked': 0, 'verification_hash': null, 'unlocked_at': null},
@@ -612,11 +706,13 @@ class SqliteService {
   Future<void> resetAllAchievementsGlobally() async {
     try {
       final db = await database;
+      await _ensureUserAchievementsTable(db);
+      await db.delete('user_achievements');
       await db.update(
         'offline_achievements',
         {'is_unlocked': 0, 'verification_hash': null, 'unlocked_at': null},
       );
-      debugPrint('🧹 [ACHIEVEMENTS RESET] Semua piagam telah di-reset ke status BELUM TERBIT!');
+      debugPrint('🧹 [ACHIEVEMENTS RESET] Semua piagam telah di-reset ke status BELUM TERBIT untuk semua akun!');
     } catch (e) {
       debugPrint('Error resetting achievements globally: $e');
     }

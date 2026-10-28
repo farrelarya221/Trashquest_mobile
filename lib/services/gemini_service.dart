@@ -57,11 +57,9 @@ class GeminiService {
   static final GeminiService instance = GeminiService._internal();
   GeminiService._internal();
 
-  const geminiApiKey =
-    String.fromEnvironment('GEMINI_API_KEY');
-
-const groqApiKey =
-    String.fromEnvironment('GROQ_API_KEY');
+  // API Keys
+  static const String _defaultGeminiKey = 'AQ.Ab8RN6IdJeZJpwsL00I6n6bbgr9W7iZPkLnkecVLE_JpoVogxg';
+  static const String _defaultGroqKey = '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';
 
   static const String prefApiKey = 'custom_gemini_api_key';
   static const String prefGroqKey = 'custom_groq_api_key';

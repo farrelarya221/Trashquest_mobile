@@ -1,5 +1,3 @@
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../app/theme/app_colors.dart';
@@ -372,7 +370,7 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                                   Icon(
                                     isUnlocked
                                         ? Icons.verified_rounded
-                                        : (isEligible ? Icons.bolt_rounded : Icons.lock_outline_rounded),
+                                        : (isEligible ? Icons.verified_outlined : Icons.lock_outline_rounded),
                                     size: 13,
                                     color: isUnlocked
                                         ? const Color(0xFF10B981)
@@ -382,8 +380,8 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                                   Flexible(
                                     child: Text(
                                       isUnlocked
-                                          ? 'ONLINE ON ETHEREUM SEPOLIA (VERIFIED)'
-                                          : (isEligible ? 'QUEST COMPLETE (READY TO MINT)' : 'LOCKED (QUEST INCOMPLETE)'),
+                                          ? 'TERVERIFIKASI DI ETHEREUM SEPOLIA (VERIFIED)'
+                                          : (isEligible ? 'BELUM TERBIT (SIAP MINT 1X)' : 'BELUM DITERBITKAN (TERKUNCI)'),
                                       style: TextStyle(
                                         color: isUnlocked
                                             ? const Color(0xFF10B981)
@@ -417,9 +415,13 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('Recipient Wallet:', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                                const Flexible(
+                                  flex: 2,
+                                  child: Text('Recipient Wallet:', style: TextStyle(color: Colors.white60, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ),
                                 const SizedBox(width: 8),
                                 Flexible(
+                                  flex: 3,
                                   child: Text(
                                     userWalletAddress,
                                     style: const TextStyle(color: Colors.white, fontSize: 10, fontFamily: 'monospace', fontWeight: FontWeight.w700),
@@ -434,9 +436,13 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('Network:', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                                const Flexible(
+                                  flex: 2,
+                                  child: Text('Network:', style: TextStyle(color: Colors.white60, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ),
                                 const SizedBox(width: 8),
                                 Flexible(
+                                  flex: 3,
                                   child: Text(
                                     BlockchainService.networkName,
                                     style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
@@ -451,9 +457,13 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('Contract:', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                                const Flexible(
+                                  flex: 2,
+                                  child: Text('Contract:', style: TextStyle(color: Colors.white60, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ),
                                 const SizedBox(width: 8),
                                 Flexible(
+                                  flex: 3,
                                   child: Text(
                                     '${BlockchainService.contractAddress.substring(0, 8)}...${BlockchainService.contractAddress.substring(36)}',
                                     style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontFamily: 'monospace', fontWeight: FontWeight.w700),
@@ -468,9 +478,13 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('Cert ID:', style: TextStyle(color: Colors.white60, fontSize: 10)),
+                                const Flexible(
+                                  flex: 2,
+                                  child: Text('Cert ID:', style: TextStyle(color: Colors.white60, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                ),
                                 const SizedBox(width: 8),
                                 Flexible(
+                                  flex: 3,
                                   child: Text(
                                     certId,
                                     style: const TextStyle(color: Colors.white70, fontSize: 10, fontFamily: 'monospace'),
@@ -549,67 +563,99 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                       ),
                       const SizedBox(height: 8),
 
-                      // EVM Hash Section
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Row(
-                              children: [
-                                Icon(Icons.link_rounded, size: 13, color: Color(0xFF38BDF8)),
-                                SizedBox(width: 4),
-                                Flexible(
-                                  child: Text(
-                                    'Ethereum Sepolia TxHash:',
-                                    style: TextStyle(color: Color(0xFF7DD3FC), fontSize: 9.5, fontWeight: FontWeight.w700),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    evmHash,
-                                    style: const TextStyle(
-                                      color: Color(0xFF38BDF8),
-                                      fontFamily: 'monospace',
-                                      fontSize: 9.5,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1.25,
+                      // EVM Hash Section (Hanya tampil jika piagam SUDAH diterbitkan on-chain)
+                      if (isUnlocked && ach.verificationHash != null && ach.verificationHash!.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.link_rounded, size: 13, color: Color(0xFF38BDF8)),
+                                  SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      'Ethereum Sepolia TxHash (Resi On-Chain Sah):',
+                                      style: TextStyle(color: Color(0xFF7DD3FC), fontSize: 9.5, fontWeight: FontWeight.w700),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      ach.verificationHash!,
+                                      style: const TextStyle(
+                                        color: Color(0xFF38BDF8),
+                                        fontFamily: 'monospace',
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w600,
+                                        height: 1.25,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  InkWell(
+                                    onTap: () {
+                                      Clipboard.setData(ClipboardData(text: ach.verificationHash!));
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('TxHash disalin!'), duration: Duration(seconds: 1)),
+                                      );
+                                    },
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(Icons.copy_rounded, size: 14, color: Color(0xFF38BDF8)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isEligible ? Icons.workspace_premium_rounded : Icons.lock_outline_rounded,
+                                size: 15,
+                                color: isEligible ? const Color(0xFF38BDF8) : Colors.white60,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  isEligible
+                                      ? 'Status: Belum Terbit ke Sepolia. Tekan tombol hijau di bawah untuk menerbitkan piagam ini secara sah ke blockchain.'
+                                      : 'Status: Belum Diterbitkan. Selesaikan quest untuk membuka syarat penerbitan piagam ini.',
+                                  style: TextStyle(
+                                    color: isEligible ? const Color(0xFFBAE6FD) : Colors.white70,
+                                    fontSize: 10,
+                                    height: 1.3,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
-                                InkWell(
-                                  onTap: () {
-                                    Clipboard.setData(ClipboardData(text: evmHash));
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('TxHash disalin!'), duration: Duration(seconds: 1)),
-                                    );
-                                  },
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(4),
-                                    child: Icon(Icons.copy_rounded, size: 14, color: Color(0xFF38BDF8)),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -625,12 +671,12 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         elevation: 2,
                       ),
-                      onPressed: () => BlockchainService.openEtherscan(evmHash),
+                      onPressed: () => BlockchainService.openEtherscan(ach.verificationHash ?? ''),
                       icon: const Icon(Icons.open_in_browser_rounded, size: 17),
                       label: const FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
-                          'Buka di Sepolia Etherscan ↗',
+                          'Cek Hash di Sepolia Etherscan ↗',
                           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
                         ),
                       ),
@@ -651,9 +697,9 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                         Navigator.pop(ctx);
                         _runAutoMintWorkflow(ach);
                       },
-                      icon: const Icon(Icons.bolt_rounded, size: 20),
+                      icon: const Icon(Icons.workspace_premium_rounded, size: 20),
                       label: const Text(
-                        '⚡ Terbitkan Piagam On-Chain (1x Mint Sah)',
+                        'Terbitkan Piagam On-Chain (1x Mint Sah)',
                         style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
                       ),
                     ),
@@ -777,7 +823,7 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                   }
                 },
               ).then((res) async {
-                await SqliteService.instance.unlockAchievement(ach.code, res.txHash);
+                await SqliteService.instance.unlockAchievement(ach.code, res.txHash, targetUserId: user.id);
                 await _loadData();
                 if (ctx.mounted) {
                   setDialogState(() {
@@ -1006,9 +1052,13 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                       children: [
                         Icon(Icons.open_in_browser_rounded, size: 14, color: Color(0xFF059669)),
                         SizedBox(width: 6),
-                        Text(
-                          'Lihat Smart Contract di Sepolia Etherscan ↗',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF059669)),
+                        Flexible(
+                          child: Text(
+                            'Lihat Smart Contract di Sepolia Etherscan ↗',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF059669)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
@@ -1027,13 +1077,6 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
             final user = SupabaseService.instance.currentUser;
             final isEligible = ach.isEligibleToMint(user);
             final missingMsg = ach.getMissingRequirementMessage(user);
-            final userCertHash = '0x${sha256.convert(utf8.encode('TRASHQUEST:CERT:${user.id}:${user.email}:${ach.code}')).toString()}';
-            final rawHash = ach.verificationHash ?? userCertHash;
-            final evmHash = BlockchainService.ensureEvmTxHash(
-              rawHash,
-              userId: user.id,
-              code: ach.code,
-            );
 
             Color borderColor;
             Color iconBg;
@@ -1055,7 +1098,7 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
               borderColor = const Color(0xFF2563EB);
               iconBg = const Color(0xFFEFF6FF);
               iconColor = const Color(0xFF2563EB);
-              iconData = Icons.bolt_rounded;
+              iconData = Icons.workspace_premium_rounded;
               badgeText = 'SIAP TERBIT';
               badgeBg = const Color(0xFFEFF6FF);
               badgeTextColor = const Color(0xFF1D4ED8);
@@ -1150,7 +1193,7 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                       ),
                     ],
                   ),
-                  if (isUnlocked) ...[
+                  if (isUnlocked && ach.verificationHash != null && ach.verificationHash!.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Container(
                       padding: const EdgeInsets.all(8),
@@ -1164,7 +1207,7 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              evmHash,
+                              ach.verificationHash!,
                               style: AppTextStyles.bodySmall.copyWith(
                                 fontFamily: 'monospace',
                                 fontSize: 10,
@@ -1181,7 +1224,7 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
                             onPressed: () {
-                              Clipboard.setData(ClipboardData(text: evmHash));
+                              Clipboard.setData(ClipboardData(text: ach.verificationHash!));
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text('TxHash disalin!'), duration: Duration(seconds: 1)),
                               );
@@ -1194,42 +1237,36 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                     Row(
                       children: [
                         Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => BlockchainService.openEtherscan(evmHash),
-                            style: OutlinedButton.styleFrom(
+                          child: ElevatedButton.icon(
+                            onPressed: () => BlockchainService.openEtherscan(ach.verificationHash!),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                              side: const BorderSide(color: Color(0xFF10B981)),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             ),
-                            child: const FittedBox(
+                            icon: const Icon(Icons.open_in_browser_rounded, size: 14),
+                            label: const FittedBox(
                               fit: BoxFit.scaleDown,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.open_in_browser_rounded, size: 13, color: Color(0xFF059669)),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'Etherscan ↗',
-                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF059669)),
-                                  ),
-                                ],
+                              child: Text(
+                                'Cek Hash di Etherscan ↗',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
                               ),
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: ElevatedButton(
+                          child: OutlinedButton(
                             onPressed: () => _showCertificateDetail(ach),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF10B981)),
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             ),
                             child: const FittedBox(
                               fit: BoxFit.scaleDown,
-                              child: Text('Lihat Piagam', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                              child: Text('Lihat Piagam', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF059669))),
                             ),
                           ),
                         ),
@@ -1248,10 +1285,10 @@ class _BlockchainViewState extends State<BlockchainView> with SingleTickerProvid
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                             ),
-                            icon: const Icon(Icons.bolt_rounded, size: 15),
+                            icon: const Icon(Icons.workspace_premium_rounded, size: 15),
                             label: const FittedBox(
                               fit: BoxFit.scaleDown,
-                              child: Text('⚡ Terbitkan Piagam', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                              child: Text('Terbitkan Piagam', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
                             ),
                           ),
                         ),

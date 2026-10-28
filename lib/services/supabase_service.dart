@@ -75,15 +75,17 @@ class SupabaseService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final savedName = prefs.getString('user_profile_fullName');
       final savedAvatar = prefs.getString('user_profile_avatarUrl');
+      final isAvatarCleared = prefs.getBool('user_profile_avatarCleared') ?? false;
       final savedBio = prefs.getString('user_profile_bio');
       final savedPhone = prefs.getString('user_profile_phone');
       final savedAddress = prefs.getString('user_profile_address');
       final savedCard = prefs.getString('user_profile_memberCardNumber');
 
-      if (savedName != null || savedAvatar != null || savedBio != null) {
+      if (savedName != null || savedAvatar != null || savedBio != null || isAvatarCleared) {
         _currentUser = _currentUser.copyWith(
           fullName: savedName ?? _currentUser.fullName,
-          avatarUrl: savedAvatar ?? _currentUser.avatarUrl,
+          avatarUrl: isAvatarCleared ? null : (savedAvatar ?? _currentUser.avatarUrl),
+          clearAvatar: isAvatarCleared,
           bio: savedBio ?? _currentUser.bio,
           phone: savedPhone ?? _currentUser.phone,
           address: savedAddress ?? _currentUser.address,
@@ -209,7 +211,7 @@ class SupabaseService extends ChangeNotifier {
           password: password,
         );
         if (res.user != null) {
-          await SqliteService.instance.resetLocalAchievementsForNewUser();
+          await SqliteService.instance.resetLocalAchievementsForNewUser(targetUserId: res.user!.id);
           await _fetchUserProfile(res.user!.id);
           await restoreAchievementsFromCloud();
           return true;
@@ -449,15 +451,19 @@ class SupabaseService extends ChangeNotifier {
     String? address,
     String? memberCardNumber,
     String? profilePicture,
+    bool removeProfilePicture = false,
   }) async {
     final cleanName = name?.trim();
+    final bool shouldClearPhoto = removeProfilePicture || (profilePicture != null && profilePicture.trim().isEmpty);
+
     final updated = _currentUser.copyWith(
       fullName: (cleanName != null && cleanName.isNotEmpty) ? cleanName : _currentUser.fullName,
       bio: bio ?? _currentUser.bio,
       phone: phone ?? _currentUser.phone,
       address: address ?? _currentUser.address,
       memberCardNumber: memberCardNumber ?? _currentUser.memberCardNumber,
-      avatarUrl: profilePicture ?? _currentUser.avatarUrl,
+      avatarUrl: shouldClearPhoto ? null : (profilePicture ?? _currentUser.avatarUrl),
+      clearAvatar: shouldClearPhoto,
     );
     _currentUser = updated;
     notifyListeners();
@@ -468,8 +474,12 @@ class SupabaseService extends ChangeNotifier {
       if (cleanName != null && cleanName.isNotEmpty) {
         await prefs.setString('user_profile_fullName', cleanName);
       }
-      if (profilePicture != null) {
+      if (shouldClearPhoto) {
+        await prefs.remove('user_profile_avatarUrl');
+        await prefs.setBool('user_profile_avatarCleared', true);
+      } else if (profilePicture != null) {
         await prefs.setString('user_profile_avatarUrl', profilePicture);
+        await prefs.remove('user_profile_avatarCleared');
       }
       if (bio != null) await prefs.setString('user_profile_bio', bio);
       if (phone != null) await prefs.setString('user_profile_phone', phone);
@@ -490,7 +500,9 @@ class SupabaseService extends ChangeNotifier {
         if (cleanName != null && cleanName.isNotEmpty) {
           updateData['full_name'] = cleanName;
         }
-        if (profilePicture != null) {
+        if (shouldClearPhoto) {
+          updateData['avatar_url'] = null;
+        } else if (profilePicture != null) {
           updateData['avatar_url'] = profilePicture;
         }
         await Supabase.instance.client.from('profiles').update(updateData).eq('id', _currentUser.id);
@@ -538,8 +550,8 @@ class SupabaseService extends ChangeNotifier {
   }
 
   /// Sync an unlocked achievement & its blockchain verification hash to Supabase cloud.
-  /// This ensures that if the user switches to a different phone or device,
-  /// their certificates and on-chain proofs are never lost!
+  /// This ensures that if the user switches to a different phone or emulator,
+  /// their genuine minted certificates are restored across devices in realtime.
   Future<void> syncAchievementToCloud(String code, String txHash) async {
     if (!_isInitialized) return;
     final user = Supabase.instance.client.auth.currentUser;
@@ -550,11 +562,15 @@ class SupabaseService extends ChangeNotifier {
       achievements[code] = {
         'tx_hash': txHash,
         'unlocked_at': DateTime.now().toIso8601String(),
+        'minted_by_user': true,
+        'mint_version': 'v10',
       };
       currentMeta['unlocked_achievements'] = achievements;
+      currentMeta['clean_slate_v10_done'] = true;
       await Supabase.instance.client.auth.updateUser(
         UserAttributes(data: currentMeta),
       );
+      notifyListeners();
       debugPrint('☁️ [ACHIEVEMENT CLOUD SYNC] Piagam $code ($txHash) tersimpan di Cloud Supabase!');
     } catch (e) {
       debugPrint('⚠️ Error syncing achievement to Supabase: $e');
@@ -569,19 +585,20 @@ class SupabaseService extends ChangeNotifier {
     if (user == null) return;
     try {
       final meta = user.userMetadata ?? {};
-      if (meta['clean_slate_v6_done'] != true) {
-        // One-time reset: semua user belum pernah terbitkan piagam
+      // Reset satu kali saat awal pembaruan v10 agar semua user bersih dari piagam lama (semua user new)
+      if (meta['clean_slate_v10_done'] != true) {
         final currentMeta = Map<String, dynamic>.from(meta);
         currentMeta.remove('unlocked_achievements');
-        currentMeta['clean_slate_v6_done'] = true;
+        currentMeta['clean_slate_v10_done'] = true;
         try {
           await Supabase.instance.client.auth.updateUser(UserAttributes(data: currentMeta));
         } catch (_) {}
-        await SqliteService.instance.resetLocalAchievementsForNewUser();
-        debugPrint('🧹 [CLOUD CLEAN SLATE] Piagam cloud akun ini telah di-reset ke belum terbit!');
+        await SqliteService.instance.resetLocalAchievementsForNewUser(targetUserId: user.id);
+        debugPrint('🧹 [SUPABASE CLEAN SLATE V10] Piagam lama akun ${user.email} telah di-reset ke BELUM TERBIT!');
         return;
       }
 
+      // Hanya pulihkan piagam yang BENAR-BENAR telah diterbitkan oleh user (minted_by_user == true / v10)
       if (meta['unlocked_achievements'] is Map) {
         final achievements = meta['unlocked_achievements'] as Map<String, dynamic>;
         for (final entry in achievements.entries) {
@@ -589,26 +606,24 @@ class SupabaseService extends ChangeNotifier {
           final data = entry.value;
           String? txHash;
           String? unlockedAt;
+          bool isGenuineMint = false;
           if (data is Map) {
             txHash = data['tx_hash']?.toString();
             unlockedAt = data['unlocked_at']?.toString();
-          } else if (data is String) {
-            txHash = data;
+            isGenuineMint = data['minted_by_user'] == true || data['mint_version'] == 'v10';
           }
-          // Hanya pulihkan jika hash adalah transaksi sah (bukan hash statis/mock lama)
-          if (txHash != null &&
-              txHash.startsWith('0x') &&
-              txHash.length == 66 &&
-              txHash != '0x94192cc6c956e0c654ade78c3eea395cd7986efec571947b8099915d70d2b8bf' &&
-              txHash != '0x354b6135f3fdfeae638767bf5470232b228d6b012255f994ba358ba81707c630' &&
-              txHash != '0x5788d7e49e76d1ff1b9789a9545ecbfa9e0e961d002fb60433c3a9466b41f262') {
-            await SqliteService.instance.restoreAchievementFromCloud(code, txHash, unlockedAt: unlockedAt);
-            debugPrint('🔄 [CROSS-DEVICE RESTORE] Piagam $code ($txHash) dipulihkan ke SQLite!');
+          if (isGenuineMint && txHash != null && txHash.startsWith('0x') && txHash.length == 66) {
+            await SqliteService.instance.restoreAchievementFromCloud(
+              code,
+              txHash,
+              targetUserId: user.id,
+              unlockedAt: unlockedAt,
+            );
           }
         }
       }
     } catch (e) {
-      debugPrint('⚠️ Error restoring achievements from Supabase: $e');
+      debugPrint('⚠️ Error in restoreAchievementsFromCloud: $e');
     }
   }
 

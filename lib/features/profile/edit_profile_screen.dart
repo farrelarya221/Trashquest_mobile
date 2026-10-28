@@ -23,6 +23,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _cardController;
 
   String? _selectedProfilePicture;
+  bool _isPhotoRemoved = false;
   bool _isSaving = false;
 
   final ImagePicker _imagePicker = ImagePicker();
@@ -39,6 +40,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _cardController = TextEditingController(text: user.memberCardNumber);
 
     _selectedProfilePicture = user.avatarUrl;
+    _isPhotoRemoved = (user.avatarUrl == null || user.avatarUrl!.trim().isEmpty);
   }
 
   @override
@@ -150,12 +152,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     child: const Icon(Icons.delete_outline_rounded, color: Colors.red),
                   ),
                   title: const Text('Hapus Foto Profil', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Colors.red)),
-                  subtitle: const Text('Kembalikan ke tampilan avatar default', style: TextStyle(fontSize: 11)),
+                  subtitle: const Text('Kembalikan ke tampilan avatar default Eco-Warrior', style: TextStyle(fontSize: 11)),
                   onTap: () {
                     Navigator.pop(ctx);
-                    setState(() {
-                      _selectedProfilePicture = null;
-                    });
+                    _removePhoto();
                   },
                 ),
             ],
@@ -163,6 +163,36 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
       ),
     );
+  }
+
+  /// Remove profile photo and reset to default Eco-Warrior avatar
+  Future<void> _removePhoto() async {
+    setState(() {
+      _selectedProfilePicture = '';
+      _isPhotoRemoved = true;
+    });
+
+    // Also persist removal directly to Supabase and local storage
+    await SupabaseService.instance.updateProfile(removeProfilePicture: true);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.check_circle_rounded, color: Colors.white),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('✅ Foto profil dihapus & dikembalikan ke avatar default Eco-Warrior!'),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.primary,
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   /// Pick image from Gallery or Camera using image_picker
@@ -181,6 +211,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         final base64String = 'data:image/jpeg;base64,${base64Encode(bytes)}';
         setState(() {
           _selectedProfilePicture = base64String;
+          _isPhotoRemoved = false;
         });
 
         if (mounted) {
@@ -239,6 +270,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 onTap: () {
                   setState(() {
                     _selectedProfilePicture = preset.id;
+                    _isPhotoRemoved = false;
                   });
                   Navigator.pop(ctx);
                 },
@@ -283,6 +315,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         ),
         actions: [
+          if (_selectedProfilePicture != null && _selectedProfilePicture!.isNotEmpty)
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _removePhoto();
+              },
+              icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 18),
+              label: const Text('Hapus / Reset Foto', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Tutup', style: TextStyle(color: AppColors.textSecondary)),
@@ -298,13 +339,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     setState(() => _isSaving = true);
 
+    final shouldRemovePhoto = _isPhotoRemoved || (_selectedProfilePicture == null || _selectedProfilePicture!.trim().isEmpty);
+
     final success = await SupabaseService.instance.updateProfile(
       name: _nameController.text.trim(),
       bio: _bioController.text.trim(),
       phone: _phoneController.text.trim(),
       address: _addressController.text.trim(),
       memberCardNumber: _cardController.text.trim(),
-      profilePicture: _selectedProfilePicture,
+      profilePicture: shouldRemovePhoto ? null : _selectedProfilePicture,
+      removeProfilePicture: shouldRemovePhoto,
     );
 
     if (!mounted) return;
@@ -317,19 +361,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             children: [
               Icon(Icons.check_circle_rounded, color: Colors.white),
               SizedBox(width: 8),
-              Text('✅ Bio data dan foto profil berhasil diperbarui!'),
+              Expanded(
+                child: Text(
+                  '✅ Bio data dan foto profil berhasil diperbarui!',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
             ],
           ),
           backgroundColor: AppColors.primary,
           behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 3),
         ),
       );
       Navigator.pop(context);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('⚠️ Gagal memperbarui profil: Terjadi kesalahan'),
+          content: Row(
+            children: [
+              Icon(Icons.error_outline_rounded, color: Colors.white),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('⚠️ Gagal memperbarui profil: Terjadi kesalahan'),
+              ),
+            ],
+          ),
           backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
@@ -469,22 +528,48 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: _showPhotoOptions,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFE8F5E9),
-              foregroundColor: AppColors.primaryDark,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ElevatedButton.icon(
+                onPressed: _showPhotoOptions,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFE8F5E9),
+                  foregroundColor: AppColors.primaryDark,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.edit_rounded, size: 16),
+                label: const Text(
+                  'Ubah Foto Profil',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
               ),
-            ),
-            icon: const Icon(Icons.edit_rounded, size: 16),
-            label: const Text(
-              'Ubah / Unggah Foto Profil',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-            ),
+              if (_selectedProfilePicture != null && _selectedProfilePicture!.isNotEmpty)
+                ElevatedButton.icon(
+                  onPressed: _removePhoto,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFFEBEE),
+                    foregroundColor: const Color(0xFFC62828),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: Color(0xFFFFCDD2)),
+                    ),
+                  ),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 16, color: Color(0xFFC62828)),
+                  label: const Text(
+                    'Hapus Foto',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFFC62828)),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 6),
           const Text(

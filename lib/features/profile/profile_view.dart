@@ -84,11 +84,15 @@ class _ProfileViewState extends State<ProfileView> {
     }
   }
 
-  void _openEditProfile() {
-    Navigator.push(
+  Future<void> _openEditProfile() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const EditProfileScreen()),
     );
+    if (mounted) {
+      await _loadProfileData();
+      setState(() {});
+    }
   }
 
   void _showHelpAndEducationModal() {
@@ -279,7 +283,7 @@ class _ProfileViewState extends State<ProfileView> {
     final certId = 'TRQ-CERT-${ach.code}-${user.id.hashCode.abs() % 100000}';
     const rawWallet = BlockchainService.userWalletAddress;
     final userWalletAddress = '${rawWallet.substring(0, 6)}...${rawWallet.substring(rawWallet.length - 4)}';
-    final bool isMintedOnChain = ach.isUnlocked && ach.verificationHash != null && ach.verificationHash!.isNotEmpty;
+    final bool isMintedOnChain = ach.isUnlocked;
     final bool isEligible = ach.isEligibleToMint(user);
     final String? missingMsg = ach.getMissingRequirementMessage(user);
 
@@ -350,8 +354,8 @@ class _ProfileViewState extends State<ProfileView> {
                       ),
                       child: Icon(
                         isMintedOnChain
-                            ? Icons.verified_rounded
-                            : (isEligible ? Icons.bolt_rounded : Icons.lock_outline_rounded),
+                            ? Icons.verified_user_rounded
+                            : (isEligible ? Icons.workspace_premium_rounded : Icons.lock_outline_rounded),
                         color: isMintedOnChain
                             ? const Color(0xFF16A34A)
                             : (isEligible ? const Color(0xFF2563EB) : const Color(0xFF64748B)),
@@ -365,25 +369,33 @@ class _ProfileViewState extends State<ProfileView> {
                         children: [
                           Row(
                             children: [
-                              Text(
-                                isMintedOnChain
-                                    ? 'Sertifikat Verified Blockchain'
-                                    : (isEligible ? 'Piagam Siap Diterbitkan' : 'Piagam Terkunci (Quest)'),
-                                style: AppTextStyles.titleSmall,
+                              Expanded(
+                                child: Text(
+                                  isMintedOnChain
+                                      ? 'Sertifikat Verified Blockchain'
+                                      : (isEligible ? 'Piagam Siap Diterbitkan' : 'Piagam Terkunci (Quest)'),
+                                  style: AppTextStyles.titleSmall,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                               const SizedBox(width: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: isMintedOnChain ? const Color(0xFFDCFCE7) : const Color(0xFFEFF6FF),
+                                  color: isMintedOnChain
+                                      ? const Color(0xFFDCFCE7)
+                                      : (isEligible ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9)),
                                   borderRadius: BorderRadius.circular(6),
                                   border: Border.all(
-                                    color: isMintedOnChain ? const Color(0xFF86EFAC) : const Color(0xFF93C5FD),
+                                    color: isMintedOnChain
+                                        ? const Color(0xFF86EFAC)
+                                        : (isEligible ? const Color(0xFF93C5FD) : const Color(0xFFCBD5E1)),
                                     width: 0.8,
                                   ),
                                 ),
                                 child: Text(
-                                  isMintedOnChain ? 'SEPOLIA' : (isEligible ? 'QUEST COMPLETE' : 'LOCKED'),
+                                  isMintedOnChain ? 'VERIFIED' : (isEligible ? 'SIAP TERBIT' : 'TERKUNCI'),
                                   style: TextStyle(
                                     fontSize: 9,
                                     fontWeight: FontWeight.w800,
@@ -536,12 +548,17 @@ class _ProfileViewState extends State<ProfileView> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'PIAGAM PENGHARGAAN RESMI',
-                            style: TextStyle(color: Color(0xFF34D399), fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.8),
+                          const Flexible(
+                            child: Text(
+                              'PIAGAM PENGHARGAAN RESMI',
+                              style: TextStyle(color: Color(0xFF34D399), fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.8),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
+                          const SizedBox(width: 6),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                             decoration: BoxDecoration(
                               color: isMintedOnChain
                                   ? const Color(0xFF065F46)
@@ -553,8 +570,8 @@ class _ProfileViewState extends State<ProfileView> {
                               children: [
                                 Icon(
                                   isMintedOnChain
-                                      ? Icons.verified_rounded
-                                      : (isEligible ? Icons.bolt_rounded : Icons.lock_outline_rounded),
+                                      ? Icons.verified_user_rounded
+                                      : (isEligible ? Icons.workspace_premium_rounded : Icons.lock_outline_rounded),
                                   size: 11,
                                   color: isMintedOnChain
                                       ? const Color(0xFF34D399)
@@ -563,13 +580,13 @@ class _ProfileViewState extends State<ProfileView> {
                                 const SizedBox(width: 4),
                                 Text(
                                   isMintedOnChain
-                                      ? 'ON-CHAIN VERIFIED'
-                                      : (isEligible ? 'SIAP MINT' : 'BELUM DIBUKA'),
+                                      ? 'VERIFIED SEPOLIA'
+                                      : (isEligible ? 'SIAP MINT' : 'TERKUNCI'),
                                   style: TextStyle(
                                     color: isMintedOnChain
                                         ? const Color(0xFF34D399)
                                         : (isEligible ? const Color(0xFF93C5FD) : Colors.white70),
-                                    fontSize: 9.5,
+                                    fontSize: 9.0,
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
@@ -740,10 +757,18 @@ class _ProfileViewState extends State<ProfileView> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('Penerima (Wallet User):', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                            Text(
-                              userWalletAddress,
-                              style: const TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                            const Flexible(
+                              child: Text('Penerima (Wallet User):', style: TextStyle(fontSize: 11, color: Color(0xFF64748B)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                userWalletAddress,
+                                style: const TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                                textAlign: TextAlign.end,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
@@ -751,10 +776,18 @@ class _ProfileViewState extends State<ProfileView> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('Jaringan:', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                            Text(
-                              BlockchainService.networkName,
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                            const Flexible(
+                              child: Text('Jaringan:', style: TextStyle(fontSize: 11, color: Color(0xFF64748B)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                BlockchainService.networkName,
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                                textAlign: TextAlign.end,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
@@ -762,10 +795,18 @@ class _ProfileViewState extends State<ProfileView> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('Smart Contract:', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                            Text(
-                              '${BlockchainService.contractAddress.substring(0, 6)}...${BlockchainService.contractAddress.substring(38)}',
-                              style: const TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w700, color: Color(0xFF2563EB)),
+                            const Flexible(
+                              child: Text('Smart Contract:', style: TextStyle(fontSize: 11, color: Color(0xFF64748B)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                '${BlockchainService.contractAddress.substring(0, 6)}...${BlockchainService.contractAddress.substring(38)}',
+                                style: const TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w700, color: Color(0xFF2563EB)),
+                                textAlign: TextAlign.end,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
@@ -815,10 +856,10 @@ class _ProfileViewState extends State<ProfileView> {
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
-                      onPressed: () => BlockchainService.openEtherscan(evmHash),
+                      onPressed: () => BlockchainService.openEtherscan(ach.verificationHash ?? evmHash),
                       icon: const Icon(Icons.open_in_browser_rounded, size: 16),
                       label: const Text(
-                        'Cek di Sepolia Etherscan ↗',
+                        'Cek Hash di Sepolia Etherscan ↗',
                         style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
                       ),
                     ),
@@ -851,9 +892,9 @@ class _ProfileViewState extends State<ProfileView> {
                         Navigator.pop(ctx);
                         _runAutoMintWorkflow(ach);
                       },
-                      icon: const Icon(Icons.bolt_rounded, size: 20),
+                      icon: const Icon(Icons.workspace_premium_rounded, size: 20),
                       label: const Text(
-                        '⚡ Terbitkan Piagam On-Chain (1x Mint Sah)',
+                        'Terbitkan Piagam On-Chain (1x Mint Sah)',
                         style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
                       ),
                     ),
@@ -938,7 +979,7 @@ class _ProfileViewState extends State<ProfileView> {
               BlockchainService.instance.autoMintCertificate(
                 achievementCode: ach.code,
                 userId: user.id,
-                recipientName: user.fullName.isNotEmpty ? user.fullName : 'Raditya Pratama',
+                recipientName: user.fullName.isNotEmpty ? user.fullName : 'Eco Warrior TrashQuest',
                 onStepUpdate: (step) {
                   if (ctx.mounted) {
                     setDialogState(() {
@@ -947,7 +988,7 @@ class _ProfileViewState extends State<ProfileView> {
                   }
                 },
               ).then((res) async {
-                await SqliteService.instance.unlockAchievement(ach.code, res.txHash);
+                await SqliteService.instance.unlockAchievement(ach.code, res.txHash, targetUserId: user.id);
                 await _loadProfileData();
                 if (ctx.mounted) {
                   setDialogState(() {
@@ -1269,10 +1310,15 @@ class _ProfileViewState extends State<ProfileView> {
                       title: 'Piagam & Sertifikat Blockchain',
                       icon: Icons.token_rounded,
                       accentColor: const Color(0xFF10B981),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const BlockchainView()),
-                      ),
+                      onTap: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const BlockchainView()),
+                        );
+                        if (mounted) {
+                          _loadProfileData();
+                        }
+                      },
                     ),
 
                     _buildSettingCard(
@@ -1645,20 +1691,30 @@ class _ProfileViewState extends State<ProfileView> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        const Text(
-          'Pencapaian & Sertifikat:',
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.8,
-            color: AppColors.textPrimary,
+        const Expanded(
+          child: Text(
+            'Pencapaian & Sertifikat:',
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.8,
+              color: AppColors.textPrimary,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
+        const SizedBox(width: 8),
         InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const BlockchainView()),
-          ),
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const BlockchainView()),
+            );
+            if (mounted) {
+              _loadProfileData();
+            }
+          },
           borderRadius: BorderRadius.circular(6),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1668,6 +1724,7 @@ class _ProfileViewState extends State<ProfileView> {
               border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
             ),
             child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(Icons.token_rounded, size: 13, color: AppColors.primary),
                 const SizedBox(width: 4),
@@ -1729,16 +1786,16 @@ class _ProfileViewState extends State<ProfileView> {
             borderColor = const Color(0xFF10B981);
             iconBg = const Color(0xFFDCFCE7);
             iconColor = const Color(0xFF16A34A);
-            iconData = Icons.verified_rounded;
-            badgeText = 'On-Chain';
+            iconData = Icons.verified_user_rounded;
+            badgeText = 'VERIFIED';
             badgeBg = const Color(0xFFDCFCE7);
             badgeTextColor = const Color(0xFF16A34A);
           } else if (isEligible) {
             borderColor = const Color(0xFF2563EB);
             iconBg = const Color(0xFFEFF6FF);
             iconColor = const Color(0xFF2563EB);
-            iconData = Icons.bolt_rounded;
-            badgeText = 'Siap Terbit!';
+            iconData = Icons.workspace_premium_rounded;
+            badgeText = 'SIAP TERBIT';
             badgeBg = const Color(0xFFEFF6FF);
             badgeTextColor = const Color(0xFF1D4ED8);
           } else {
@@ -1746,7 +1803,7 @@ class _ProfileViewState extends State<ProfileView> {
             iconBg = const Color(0xFFF1F5F9);
             iconColor = const Color(0xFF94A3B8);
             iconData = Icons.lock_outline_rounded;
-            badgeText = '${ach.requiredXp} XP';
+            badgeText = 'TERKUNCI';
             badgeBg = const Color(0xFFF1F5F9);
             badgeTextColor = const Color(0xFF64748B);
           }
@@ -1783,18 +1840,23 @@ class _ProfileViewState extends State<ProfileView> {
                         ),
                         child: Icon(iconData, size: 16, color: iconColor),
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: badgeBg,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Text(
-                          badgeText,
-                          style: TextStyle(
-                            fontSize: 8.5,
-                            color: badgeTextColor,
-                            fontWeight: FontWeight.w800,
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: badgeBg,
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            badgeText,
+                            style: TextStyle(
+                              fontSize: 8.5,
+                              color: badgeTextColor,
+                              fontWeight: FontWeight.w800,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
@@ -1809,8 +1871,18 @@ class _ProfileViewState extends State<ProfileView> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    ach.description,
-                    style: const TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
+                    isUnlocked
+                        ? 'Tervalidasi di Ethereum Sepolia (1 Hash Sah)'
+                        : (isEligible
+                            ? '✨ Syarat Quest terpenuhi (${user.xp}/${ach.requiredXp} XP)'
+                            : 'Syarat: ${ach.questRequirementsSummary}'),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isUnlocked
+                          ? const Color(0xFF059669)
+                          : (isEligible ? const Color(0xFF1D4ED8) : AppColors.textSecondary),
+                      fontWeight: isUnlocked || isEligible ? FontWeight.w600 : FontWeight.normal,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
