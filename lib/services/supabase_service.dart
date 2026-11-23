@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -146,21 +148,28 @@ class SupabaseService extends ChangeNotifier {
 
   String? lastAuthError;
 
+  /// Menghasilkan string hash SHA-256 dari kata sandi pengguna (Client-Side Hashing)
+  static String hashPassword(String password) {
+    final bytes = utf8.encode(password.trim());
+    return sha256.convert(bytes).toString();
+  }
+
   Future<bool> register({required String email, required String password, required String fullName}) async {
     lastAuthError = null;
     if (_isInitialized) {
       try {
+        final hashedPassword = hashPassword(password);
         final res = await Supabase.instance.client.auth.signUp(
-          email: email,
-          password: password,
-          data: {'full_name': fullName},
+          email: email.trim(),
+          password: hashedPassword,
+          data: {'full_name': fullName.trim()},
         );
         if (res.user != null) {
           try {
             await Supabase.instance.client.from('profiles').upsert({
               'id': res.user!.id,
-              'full_name': fullName,
-              'email': email,
+              'full_name': fullName.trim(),
+              'email': email.trim(),
               'xp': 100,
               'level': 1,
               'streak_days': 1,
@@ -205,34 +214,61 @@ class SupabaseService extends ChangeNotifier {
   Future<bool> login({required String email, required String password}) async {
     lastAuthError = null;
     if (_isInitialized) {
+      final cleanEmail = email.trim();
+      final cleanPassword = password.trim();
+      final hashedPassword = hashPassword(cleanPassword);
+
+      AuthResponse? res;
+
+      // 1. Coba login pertama dengan Hash SHA-256 (Akun Baru / Standar Enkripsi)
       try {
-        final res = await Supabase.instance.client.auth.signInWithPassword(
-          email: email,
-          password: password,
+        res = await Supabase.instance.client.auth.signInWithPassword(
+          email: cleanEmail,
+          password: hashedPassword,
         );
-        if (res.user != null) {
-          await SqliteService.instance.resetLocalAchievementsForNewUser(targetUserId: res.user!.id);
-          await _fetchUserProfile(res.user!.id);
-          await restoreAchievementsFromCloud();
-          return true;
-        } else {
-          lastAuthError = 'Akun tidak ditemukan atau password salah.';
-          return false;
-        }
       } on AuthException catch (e) {
-        debugPrint('Supabase sign in AuthException: ${e.message}');
         final msg = e.message.toLowerCase();
+        // 2. Dual-Check: Jika gagal karena kredensial tidak cocok, fallback ke password biasa (kompatibilitas akun lama)
         if (msg.contains('invalid login credentials') || msg.contains('invalid credentials')) {
-          lastAuthError = 'Email tidak terdaftar atau password salah.';
+          try {
+            res = await Supabase.instance.client.auth.signInWithPassword(
+              email: cleanEmail,
+              password: cleanPassword,
+            );
+          } on AuthException catch (fallbackErr) {
+            final fMsg = fallbackErr.message.toLowerCase();
+            if (fMsg.contains('invalid login credentials') || fMsg.contains('invalid credentials')) {
+              lastAuthError = 'Email tidak terdaftar atau password salah.';
+            } else if (fMsg.contains('email not confirmed')) {
+              lastAuthError = 'Email belum dikonfirmasi. Periksa kotak masuk email kamu.';
+            } else {
+              lastAuthError = fallbackErr.message;
+            }
+            return false;
+          } catch (e) {
+            lastAuthError = 'Gagal menghubungi server: $e';
+            return false;
+          }
         } else if (msg.contains('email not confirmed')) {
           lastAuthError = 'Email belum dikonfirmasi. Periksa kotak masuk email kamu.';
+          return false;
         } else {
           lastAuthError = e.message;
+          return false;
         }
-        return false;
       } catch (e) {
         debugPrint('Supabase sign in error: $e');
         lastAuthError = 'Gagal menghubungi server: $e';
+        return false;
+      }
+
+      if (res != null && res.user != null) {
+        await SqliteService.instance.resetLocalAchievementsForNewUser(targetUserId: res.user!.id);
+        await _fetchUserProfile(res.user!.id);
+        await restoreAchievementsFromCloud();
+        return true;
+      } else {
+        lastAuthError = 'Akun tidak ditemukan atau password salah.';
         return false;
       }
     }
@@ -369,13 +405,30 @@ class SupabaseService extends ChangeNotifier {
   }
 
   Future<bool> sendFeedback({required String message, required int rating}) async {
+    final now = DateTime.now().toIso8601String();
+    final fbId = 'fb-${DateTime.now().millisecondsSinceEpoch}';
+
+    // Simpan ke SQLite lokal agar langsung tersimpan & tampil di bawah tombol
+    try {
+      await SqliteService.instance.insertFeedback({
+        'id': fbId,
+        'user_id': _currentUser.id,
+        'user_name': _currentUser.fullName.isNotEmpty ? _currentUser.fullName : 'Pengguna TrashQuest',
+        'rating': rating,
+        'message': message,
+        'created_at': now,
+      });
+    } catch (e) {
+      debugPrint('Local feedback save error: $e');
+    }
+
     if (_isInitialized && Supabase.instance.client.auth.currentUser != null) {
       try {
         await Supabase.instance.client.from('feedback').insert({
           'user_id': _currentUser.id,
           'message': message,
           'rating': rating,
-          'created_at': DateTime.now().toIso8601String(),
+          'created_at': now,
         });
         return true;
       } catch (e) {

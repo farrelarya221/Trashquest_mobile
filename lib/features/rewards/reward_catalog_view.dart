@@ -241,6 +241,7 @@ class _RewardCatalogViewState extends State<RewardCatalogView> {
 
     await SqliteService.instance.insertTransaction({
       'id': 'tx-${DateTime.now().millisecondsSinceEpoch}',
+      'user_id': SupabaseService.instance.currentUser.id,
       'item_name': itemName,
       'cost': cost,
       'type': type,

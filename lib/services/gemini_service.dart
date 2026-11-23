@@ -58,8 +58,8 @@ class GeminiService {
   GeminiService._internal();
 
   // API Keys
-  static const String _defaultGeminiKey = 'AQ.Ab8RN6IdJeZJpwsL00I6n6bbgr9W7iZPkLnkecVLE_JpoVogxg';
-  static const String _defaultGroqKey = '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';
+  static const String _defaultGeminiKey = '';
+  static const String _defaultGroqKey = '';
 
   static const String prefApiKey = 'custom_gemini_api_key';
   static const String prefGroqKey = 'custom_groq_api_key';

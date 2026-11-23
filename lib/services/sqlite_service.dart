@@ -39,6 +39,7 @@ class SqliteService {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS user_transactions (
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             item_name TEXT NOT NULL,
             cost INTEGER NOT NULL,
             type TEXT NOT NULL,
@@ -48,6 +49,9 @@ class SqliteService {
             status TEXT NOT NULL
           )
         ''');
+        try {
+          await db.execute('ALTER TABLE user_transactions ADD COLUMN user_id TEXT');
+        } catch (_) {}
         await db.execute('''
           CREATE TABLE IF NOT EXISTS user_notifications (
             id TEXT PRIMARY KEY,
@@ -78,6 +82,16 @@ class SqliteService {
             unlocked_at TEXT,
             verification_hash TEXT,
             PRIMARY KEY (user_id, code)
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS user_feedbacks (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            user_name TEXT,
+            rating INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL
           )
         ''');
         try {
@@ -184,10 +198,11 @@ class SqliteService {
       )
     ''');
 
-    // 7. Local Redeem Transactions
+    // 7. Local Redeem Transactions & Deposits
     await db.execute('''
       CREATE TABLE IF NOT EXISTS user_transactions (
         id TEXT PRIMARY KEY,
+        user_id TEXT,
         item_name TEXT NOT NULL,
         cost INTEGER NOT NULL,
         type TEXT NOT NULL,
@@ -195,6 +210,18 @@ class SqliteService {
         account_info TEXT,
         voucher_code TEXT,
         status TEXT NOT NULL
+      )
+    ''');
+
+    // 8. User Feedback History
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS user_feedbacks (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        user_name TEXT,
+        rating INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
       )
     ''');
 
@@ -232,7 +259,12 @@ class SqliteService {
   Future<void> insertScan(WasteScan scan) async {
     try {
       final db = await database;
-      await db.insert('local_scan_history', scan.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      final map = Map<String, dynamic>.from(scan.toMap());
+      final currentUserId = SupabaseService.instance.currentUser.id;
+      if ((map['user_id'] == null || (map['user_id'] as String).isEmpty) && currentUserId.isNotEmpty) {
+        map['user_id'] = currentUserId;
+      }
+      await db.insert('local_scan_history', map, conflictAlgorithm: ConflictAlgorithm.replace);
       // Real-time quest progress update
       await incrementQuestProgressByType(QuestType.scanWaste, amount: 1);
     } catch (e) {
@@ -240,10 +272,17 @@ class SqliteService {
     }
   }
 
-  Future<List<WasteScan>> getScans({int limit = 50}) async {
+  Future<List<WasteScan>> getScans({int limit = 50, String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query('local_scan_history', orderBy: 'created_at DESC', limit: limit);
+      final targetUserId = userId ?? SupabaseService.instance.currentUser.id;
+      final maps = await db.query(
+        'local_scan_history',
+        where: targetUserId.isNotEmpty ? 'user_id = ?' : null,
+        whereArgs: targetUserId.isNotEmpty ? [targetUserId] : null,
+        orderBy: 'created_at DESC',
+        limit: limit,
+      );
       return maps.map((m) => WasteScan.fromMap(m)).toList();
     } catch (e) {
       debugPrint('Error getting scans: $e');
@@ -251,10 +290,15 @@ class SqliteService {
     }
   }
 
-  Future<List<WasteScan>> getUnsyncedScans() async {
+  Future<List<WasteScan>> getUnsyncedScans({String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query('local_scan_history', where: 'is_synced = ?', whereArgs: [0]);
+      final targetUserId = userId ?? SupabaseService.instance.currentUser.id;
+      final maps = await db.query(
+        'local_scan_history',
+        where: targetUserId.isNotEmpty ? 'is_synced = ? AND user_id = ?' : 'is_synced = ?',
+        whereArgs: targetUserId.isNotEmpty ? [0, targetUserId] : [0],
+      );
       return maps.map((m) => WasteScan.fromMap(m)).toList();
     } catch (e) {
       return [];
@@ -719,21 +763,65 @@ class SqliteService {
   }
 
   // --- Transaction Operations ---
-  Future<void> insertTransaction(Map<String, dynamic> tx) async {
+  Future<void> insertTransaction(Map<String, dynamic> tx, {String? userId}) async {
     try {
       final db = await database;
-      await db.insert('user_transactions', tx, conflictAlgorithm: ConflictAlgorithm.replace);
+      final targetUserId = userId ?? tx['user_id'] ?? SupabaseService.instance.currentUser.id;
+      final data = Map<String, dynamic>.from(tx);
+      data['user_id'] = targetUserId;
+      await db.insert('user_transactions', data, conflictAlgorithm: ConflictAlgorithm.replace);
     } catch (e) {
       debugPrint('Error inserting transaction: $e');
     }
   }
 
-  Future<List<Map<String, dynamic>>> getTransactions() async {
+  Future<List<Map<String, dynamic>>> getTransactions({String? userId}) async {
     try {
       final db = await database;
+      final targetUserId = userId ?? SupabaseService.instance.currentUser.id;
+      if (targetUserId.isNotEmpty) {
+        return await db.query(
+          'user_transactions',
+          where: 'user_id = ?',
+          whereArgs: [targetUserId],
+          orderBy: 'created_at DESC',
+        );
+      }
       return await db.query('user_transactions', orderBy: 'created_at DESC');
     } catch (e) {
       debugPrint('Error getting transactions: $e');
+      return [];
+    }
+  }
+
+  // --- Feedback Operations ---
+  Future<void> insertFeedback(Map<String, dynamic> fb, {String? userId}) async {
+    try {
+      final db = await database;
+      final targetUserId = userId ?? fb['user_id'] ?? SupabaseService.instance.currentUser.id;
+      final data = Map<String, dynamic>.from(fb);
+      data['user_id'] = targetUserId;
+      await db.insert('user_feedbacks', data, conflictAlgorithm: ConflictAlgorithm.replace);
+    } catch (e) {
+      debugPrint('Error inserting feedback: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getFeedbacks({String? userId}) async {
+    try {
+      final db = await database;
+      final targetUserId = userId ?? SupabaseService.instance.currentUser.id;
+      if (targetUserId.isNotEmpty) {
+        return await db.query(
+          'user_feedbacks',
+          where: 'user_id = ?',
+          whereArgs: [targetUserId],
+          orderBy: 'created_at DESC',
+        );
+      }
+      return await db.query('user_feedbacks', orderBy: 'created_at DESC');
+    } catch (e) {
+      debugPrint('Error getting feedbacks: $e');
       return [];
     }
   }
